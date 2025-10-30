@@ -9,7 +9,7 @@ app.use(bodyParser.json());
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 // Replace this with your bot token
-const TOKEN = "YOUR_DISCORD_BOT_TOKEN";
+const TOKEN = process.env.DISCORD_TOKEN;
 
 client.once("ready", () => {
   console.log(`🤖 Logged in as ${client.user.tag}`);
