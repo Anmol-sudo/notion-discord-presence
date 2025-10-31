@@ -1,54 +1,89 @@
-import express from "express";
-import bodyParser from "body-parser";
-import { Client, GatewayIntentBits } from "discord.js";
+import dotenv from "dotenv";
+import clipboard from "clipboardy";
+import RPC from "discord-rpc";
+import { Client as NotionClient } from "@notionhq/client";
 
-const app = express();
-app.use(bodyParser.json());
+dotenv.config();
 
-// Discord bot setup
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
-const TOKEN = process.env.DISCORD_TOKEN;
+// Initialize Notion + Discord clients
+const notion = new NotionClient({ auth: process.env.NOTION_TOKEN });
+const discord = new RPC.Client({ transport: "ipc" });
 
-let lastStatus = null;
 
-client.once("ready", () => {
-  console.log(`🤖 Logged in as ${client.user.tag}`);
-});
+// Fetch title + description from a Notion page
+async function getPageInfo(pageId) {
+  try {
+    console.log(pageId);
+    const page = await notion.pages.retrieve({ page_id: pageId });
+    console.log(page.properties.Name.title?.[0]?.plain_text);
+    
+    const title =
+      page.properties?.Name?.title?.[0]?.plain_text || "Untitled Page";
+    const description =
+      page.properties?.Description?.rich_text?.[0]?.plain_text ||
+      "No description";
 
-app.post("/update-status", (req, res) => {
-  const { title, words, lines, folder } = req.body;
-  const statusText = `📘 ${folder ? folder + " → " : ""}${title} | ${words}w | ${lines}l`;
-
-  client.user.setActivity(statusText, { type: 0 });
-  console.log("✅ Updated Discord Bot Status:", statusText);
-
-  // Save the latest info with a timestamp
-  lastStatus = {
-    title,
-    words,
-    lines,
-    folder,
-    updatedAt: Date.now(),
-  };
-
-  res.send("Status updated!");
-});
-
-app.get("/current-status", (req, res) => {
-  if (!lastStatus) {
-    return res.json({ title: "Idle", folder: "Notion", idle: true });
+    return { title, description };
+  } catch (error) {
+    console.error("Error fetching page info:", error.message);
+    return {
+      title: "Unknown Page",
+      description: "Access denied or invalid ID",
+    };
   }
+}
 
-  const fiveMinutes = 5 * 60 * 1000;
-  const idle = Date.now() - lastStatus.updatedAt > fiveMinutes;
+// Extract Notion page ID from any copied link
+function extractPageIdFromUrl(url) {
+  const match = url.match(/([a-f0-9]{32})/);
+  if (!match) return null;
+  // Convert to UUID format
+  const id = match[1];
+  return (
+    id.substring(0, 8) +
+    "-" +
+    id.substring(8, 12) +
+    "-" +
+    id.substring(12, 16) +
+    "-" +
+    id.substring(16, 20) +
+    "-" +
+    id.substring(20)
+  );
+}
 
-  if (idle) {
-    return res.json({ title: "Idle", folder: "No recent Notion activity", idle: true });
-  }
+// Main loop to monitor clipboard + update Discord
+async function watchClipboard() {
+  let lastPageId = null;
 
-  res.json({ ...lastStatus, idle: false });
+  setInterval(async () => {
+    const text = await clipboard.read();
+    const pageId = extractPageIdFromUrl(text);
+    console.log(pageId);
+    
+    if (!pageId || pageId === lastPageId) return;
+    lastPageId = pageId;
+
+    console.log(`🪄 New Notion page detected: ${pageId}`);
+
+    const { title, description } = await getPageInfo(pageId);
+
+    discord.setActivity({
+      details: title || "Editing a Notion Page",
+      state: description || "No description provided",
+      largeImageKey: "notion", // optional; set in your Discord app assets
+      largeImageText: "Working in Notion",
+    });
+
+    console.log(`✅ Discord status updated → ${title}`);
+  }, 5000); // every 5 seconds
+}
+
+// Start Discord RPC
+discord.on("ready", async () => {
+  console.log(`🎮 Connected to Discord as ${discord.user.username}`);
+  console.log("📋 Copy a Notion page link to update your status!");
+  watchClipboard();
 });
 
-client.login(TOKEN);
-
-app.listen(3000, () => console.log("🌐 Server running on port 3000"));
+discord.login({ clientId: process.env.DISCORD_CLIENT_ID });
