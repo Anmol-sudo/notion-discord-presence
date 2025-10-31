@@ -9,7 +9,7 @@ app.use(bodyParser.json());
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const TOKEN = process.env.DISCORD_TOKEN;
 
-let lastStatus = null; // 🆕 store the most recent status
+let lastStatus = null;
 
 client.once("ready", () => {
   console.log(`🤖 Logged in as ${client.user.tag}`);
@@ -17,24 +17,36 @@ client.once("ready", () => {
 
 app.post("/update-status", (req, res) => {
   const { title, words, lines, folder } = req.body;
-
   const statusText = `📘 ${folder ? folder + " → " : ""}${title} | ${words}w | ${lines}l`;
 
   client.user.setActivity(statusText, { type: 0 });
   console.log("✅ Updated Discord Bot Status:", statusText);
 
-  // 🆕 Save this so your local presence app can fetch it
-  lastStatus = { title, words, lines, folder, updatedAt: Date.now() };
+  // Save the latest info with a timestamp
+  lastStatus = {
+    title,
+    words,
+    lines,
+    folder,
+    updatedAt: Date.now(),
+  };
 
   res.send("Status updated!");
 });
 
-// 🆕 Add endpoint for your local Rich Presence app
 app.get("/current-status", (req, res) => {
   if (!lastStatus) {
-    return res.json({ title: "Idle", folder: "Notion", words: 0, lines: 0 });
+    return res.json({ title: "Idle", folder: "Notion", idle: true });
   }
-  res.json(lastStatus);
+
+  const fiveMinutes = 5 * 60 * 1000;
+  const idle = Date.now() - lastStatus.updatedAt > fiveMinutes;
+
+  if (idle) {
+    return res.json({ title: "Idle", folder: "No recent Notion activity", idle: true });
+  }
+
+  res.json({ ...lastStatus, idle: false });
 });
 
 client.login(TOKEN);
